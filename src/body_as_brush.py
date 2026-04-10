@@ -21,6 +21,7 @@ def run_body_as_brush():
     # Core B: Hands — high-res fingertips and pinch for drawing
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.7, min_tracking_confidence=0.7)
+    mp_drawing = mp.solutions.drawing_utils
 
     ret, frame = cap.read()
     if not ret: return
@@ -35,6 +36,8 @@ def run_body_as_brush():
 
     color_cooldown = 0
     clear_cooldown = 0
+    skeleton_cooldown = 0
+    show_skeleton = True
 
     ema_sx = None
     ema_sy = None
@@ -59,6 +62,7 @@ def run_body_as_brush():
 
         if color_cooldown > 0: color_cooldown -= 1
         if clear_cooldown > 0: clear_cooldown -= 1
+        if skeleton_cooldown > 0: skeleton_cooldown -= 1
 
         # --- 3. Macro gestures (Pose) ---
         if results_pose.pose_landmarks:
@@ -68,6 +72,10 @@ def run_body_as_brush():
             phys_left_wrist = landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value]
             phys_left_shoulder = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
             phys_right_wrist = landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value]
+            left_hip = landmarks[mp_pose.PoseLandmark.LEFT_HIP.value]
+            right_hip = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value]
+            left_knee = landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value]
+            right_knee = landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value]
 
             # A. Color: physical left wrist above left shoulder
             if phys_left_wrist.visibility > 0.5 and phys_left_shoulder.visibility > 0.5:
@@ -84,6 +92,20 @@ def run_body_as_brush():
                     canvas = np.zeros_like(canvas)
                     clear_cooldown = 30
                     print("Canvas Cleared!")
+
+            # C. Toggle skeleton display: squat down
+            if (
+                left_hip.visibility > 0.5 and right_hip.visibility > 0.5
+                and left_knee.visibility > 0.5 and right_knee.visibility > 0.5
+            ):
+                # In normalized coordinates, squat reduces hip-to-knee vertical distance.
+                avg_hip_knee_delta = (
+                    (left_knee.y - left_hip.y) + (right_knee.y - right_hip.y)
+                ) * 0.5
+                if avg_hip_knee_delta < 0.18 and skeleton_cooldown == 0:
+                    show_skeleton = not show_skeleton
+                    skeleton_cooldown = 40
+                    print(f"Skeleton visible: {show_skeleton}")
 
         # --- 4. Drawing (Hands): precise index tip + pinch ---
         if results_hands.multi_hand_landmarks and results_hands.multi_handedness:
@@ -134,6 +156,19 @@ def run_body_as_brush():
         # Composite camera + canvas
         output = cv2.addWeighted(frame, 0.5, canvas, 0.9, 0)
 
+        if show_skeleton and results_pose.pose_landmarks:
+            mp_drawing.draw_landmarks(
+                output,
+                results_pose.pose_landmarks,
+                mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=mp_drawing.DrawingSpec(
+                    color=(0, 255, 0), thickness=2, circle_radius=2
+                ),
+                connection_drawing_spec=mp_drawing.DrawingSpec(
+                    color=(200, 200, 200), thickness=2
+                ),
+            )
+
         # Left dashboard panel with alpha blend
         overlay = output.copy()
         cv2.rectangle(overlay, (0, 0), (320, height), (20, 20, 20), -1)  # panel fill
@@ -157,12 +192,17 @@ def run_body_as_brush():
         cv2.putText(output, "CURRENT COLOR", (20, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
         cv2.circle(output, (40, 230), 20, brush_color, -1)
         cv2.circle(output, (40, 230), 22, (255, 255, 255), 2)  # white ring
+        cv2.putText(output, "SKELETON", (20, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+        skel_text = "ON" if show_skeleton else "OFF"
+        skel_color = (0, 255, 0) if show_skeleton else (100, 100, 100)
+        cv2.putText(output, skel_text, (120, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.5, skel_color, 1)
 
         # Help text (bottom)
         cv2.putText(output, "CONTROLS", (20, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
         cv2.putText(output, "- Pinch: Draw", (20, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
         cv2.putText(output, "- L-Arm Up: Color", (20, 370), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
         cv2.putText(output, "- Cross Wrists: Clear", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+        cv2.putText(output, "- Squat: Skeleton On/Off", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
 
         cv2.imshow("Body-as-Brush [Pro UI]", output)
 

@@ -2,6 +2,8 @@
 
 Contactless drawing with a webcam: **MediaPipe Pose** + **Hands**, **OpenCV**. Pinch with your right hand to draw; raise your left arm to change color; bring wrists together to clear the canvas. Press **q** to quit.
 
+**Gestures:** pinch (right hand) — draw · left arm up — cycle color · wrists close — clear canvas · **squat** — toggle body skeleton overlay on/off.
+
 ## Requirements
 
 | | |
