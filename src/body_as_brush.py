@@ -3,6 +3,10 @@ import mediapipe as mp
 import numpy as np
 import math
 
+# EMA on index-tip pixels to reduce landmark jitter. Higher alpha = snappier, lower = smoother.
+EMA_ALPHA = 0.45
+
+
 def run_body_as_brush():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -17,7 +21,6 @@ def run_body_as_brush():
     # Core B: Hands — high-res fingertips and pinch for drawing
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.7, min_tracking_confidence=0.7)
-    mp_drawing = mp.solutions.drawing_utils
 
     ret, frame = cap.read()
     if not ret: return
@@ -32,6 +35,9 @@ def run_body_as_brush():
 
     color_cooldown = 0
     clear_cooldown = 0
+
+    ema_sx = None
+    ema_sy = None
 
     print("Body-as-Brush [Dual-Model Fusion Edition] Running.")
 
@@ -49,6 +55,7 @@ def run_body_as_brush():
 
         current_point = None
         is_drawing = False
+        right_hand_seen = False
 
         if color_cooldown > 0: color_cooldown -= 1
         if clear_cooldown > 0: clear_cooldown -= 1
@@ -83,22 +90,33 @@ def run_body_as_brush():
             for hand_landmarks, handedness in zip(results_hands.multi_hand_landmarks, results_hands.multi_handedness):
                 # After mirror, physical right hand is labeled "Right"
                 if handedness.classification[0].label == 'Right':
+                    right_hand_seen = True
                     # INDEX_FINGER_TIP (8), THUMB_TIP (4)
                     index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
                     thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                    
-                    x = int(index_tip.x * width)
-                    y = int(index_tip.y * height)
-                    current_point = (x, y)
 
-                    # Pinch distance (tune ~0.03–0.05 for your hand size)
+                    raw_x = index_tip.x * width
+                    raw_y = index_tip.y * height
+
+                    if ema_sx is None:
+                        ema_sx, ema_sy = raw_x, raw_y
+                    else:
+                        ema_sx = EMA_ALPHA * raw_x + (1.0 - EMA_ALPHA) * ema_sx
+                        ema_sy = EMA_ALPHA * raw_y + (1.0 - EMA_ALPHA) * ema_sy
+                    current_point = (int(ema_sx), int(ema_sy))
+
+                    # Pinch uses raw landmarks; brush uses EMA-smoothed tip
                     pinch_dist = math.hypot(index_tip.x - thumb_tip.x, index_tip.y - thumb_tip.y)
-                    
+
                     if pinch_dist < 0.03:
                         is_drawing = True
                         cv2.circle(frame, current_point, 8, brush_color, -1)  # pinched: solid dot
                     else:
                         cv2.circle(frame, current_point, 8, (255, 255, 255), 2)  # open: crosshair ring
+
+        if not right_hand_seen:
+            ema_sx = None
+            ema_sy = None
 
         # --- 5. Rendering (modern UI) ---
         
