@@ -1,7 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-
+import math
 
 def run_body_as_brush():
     cap = cv2.VideoCapture(0)
@@ -15,23 +15,24 @@ def run_body_as_brush():
 
     ret, frame = cap.read()
     if not ret:
-        print("Error: Cannot read from webcam.")
-        cap.release()
         return
 
     height, width, _ = frame.shape
     canvas = np.zeros_like(frame)
 
-    drawing_enabled = True
-    brush_color = (0, 255, 255)  # Yellow-ish
+    colors = [(0, 255, 255), (255, 0, 0), (0, 0, 255), (0, 255, 0)]  # yellow, blue, red, green
+    color_index = 0
+    brush_color = colors[color_index]
     prev_point = None
 
-    print("Body-as-Brush MVP running.")
-    print("Controls:")
-    print("  d - toggle drawing on/off")
-    print("  c - clear canvas")
-    print("  1/2/3 - change brush color")
-    print("  q - quit")
+    # Debounce cooldown to avoid dozens of color changes within one second
+    color_cooldown = 0
+    clear_cooldown = 0
+
+    print("Body-as-Brush [Gesture Control Edition] Running.")
+    print("  Right Wrist: Draw")
+    print("  Left Hand Up: Change Color")
+    print("  Hands Together: Clear Canvas")
 
     while True:
         ret, frame = cap.read()
@@ -44,58 +45,64 @@ def run_body_as_brush():
 
         current_point = None
 
-        if results.pose_landmarks:
-            # Draw landmarks lightly on the video feed for debugging / demo
-            mp_drawing.draw_landmarks(
-                frame,
-                results.pose_landmarks,
-                mp_pose.POSE_CONNECTIONS,
-                landmark_drawing_spec=mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2),
-            )
+        # Cooldown tick-down
+        if color_cooldown > 0: color_cooldown -= 1
+        if clear_cooldown > 0: clear_cooldown -= 1
 
-            # Use right wrist as the "brush"
-            right_wrist = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_WRIST]
+        if results.pose_landmarks:
+            landmarks = results.pose_landmarks.landmark
+            
+            right_wrist = landmarks[mp_pose.PoseLandmark.RIGHT_WRIST]
+            left_wrist = landmarks[mp_pose.PoseLandmark.LEFT_WRIST]
+            left_shoulder = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
+
+            # 1. Drawing: right wrist
             if right_wrist.visibility > 0.5:
                 x = int(right_wrist.x * width)
                 y = int(right_wrist.y * height)
                 current_point = (x, y)
 
-        if drawing_enabled and current_point is not None:
+            # 2. Color change: left hand raised (left wrist y above left shoulder)
+            if left_wrist.visibility > 0.5 and left_shoulder.visibility > 0.5:
+                if left_wrist.y < left_shoulder.y and color_cooldown == 0:
+                    color_index = (color_index + 1) % len(colors)
+                    brush_color = colors[color_index]
+                    color_cooldown = 30  # ~1 s at ~30 fps
+                    print(f"Color changed! Index: {color_index}")
+
+            # 3. Clear canvas: hands together / crossed (wrists close)
+            if right_wrist.visibility > 0.5 and left_wrist.visibility > 0.5:
+                # Distance between the two wrists
+                dist = math.hypot(right_wrist.x - left_wrist.x, right_wrist.y - left_wrist.y)
+                if dist < 0.1 and clear_cooldown == 0:  # threshold in normalized coords
+                    canvas = np.zeros_like(canvas)
+                    clear_cooldown = 30
+                    print("Canvas Cleared!")
+
+        # Draw stroke trail
+        if current_point is not None:
             if prev_point is not None:
-                cv2.line(canvas, prev_point, current_point, brush_color, thickness=5)
+                cv2.line(canvas, prev_point, current_point, brush_color, thickness=8)
             prev_point = current_point
         else:
             prev_point = None
 
-        # Combine webcam frame and drawing canvas
-        output = cv2.addWeighted(frame, 0.3, canvas, 0.7, 0)
+        # Composite frame and UI overlay
+        output = cv2.addWeighted(frame, 0.4, canvas, 0.8, 0)
+        cv2.putText(output, "Left Hand Up: Color | Hands Crossed: Clear", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Current color swatch
+        cv2.circle(output, (50, 80), 20, brush_color, -1)
+        cv2.putText(output, "Current Color", (80, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
-        cv2.imshow("Body-as-Brush - Camera + Trails", output)
+        cv2.imshow("Body-as-Brush", output)
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
-        elif key == ord("d"):
-            drawing_enabled = not drawing_enabled
-            print(f"Drawing enabled: {drawing_enabled}")
-        elif key == ord("c"):
-            canvas = np.zeros_like(canvas)
-            print("Canvas cleared.")
-        elif key == ord("1"):
-            brush_color = (0, 255, 255)  # Yellow
-            print("Brush color: yellow")
-        elif key == ord("2"):
-            brush_color = (255, 0, 0)  # Blue
-            print("Brush color: blue")
-        elif key == ord("3"):
-            brush_color = (0, 0, 255)  # Red
-            print("Brush color: red")
 
     cap.release()
     cv2.destroyAllWindows()
 
-
 if __name__ == "__main__":
     run_body_as_brush()
-
