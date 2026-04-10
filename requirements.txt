@@ -1,3 +1,6 @@
+# Body-as-Brush — install with: pip install -r requirements.txt
+#
+# Pin MediaPipe: versions >=0.10.31 drop the legacy mp.solutions API used by this project.
 opencv-python
 mediapipe==0.10.14
 numpy
