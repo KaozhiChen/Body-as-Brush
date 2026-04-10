@@ -94,60 +94,59 @@ def run_body_as_brush():
                     # Pinch distance (tune ~0.03–0.05 for your hand size)
                     pinch_dist = math.hypot(index_tip.x - thumb_tip.x, index_tip.y - thumb_tip.y)
                     
-                    if pinch_dist < 0.04:
+                    if pinch_dist < 0.03:
                         is_drawing = True
                         cv2.circle(frame, current_point, 8, brush_color, -1)  # pinched: solid dot
                     else:
                         cv2.circle(frame, current_point, 8, (255, 255, 255), 2)  # open: crosshair ring
 
-        # --- 5. Composite + UI ---
+        # --- 5. Rendering (modern UI) ---
+        
+        # Neon brush: thick glow on live frame, thin solid stroke on persistent canvas
         if is_drawing and current_point is not None:
             if prev_point is not None:
-                cv2.line(canvas, prev_point, current_point, brush_color, thickness=8)
+                # Glow layer (thick stroke on camera frame)
+                cv2.line(frame, prev_point, current_point, brush_color, thickness=20)
+                # Core stroke on canvas
+                cv2.line(canvas, prev_point, current_point, brush_color, thickness=6)
             prev_point = current_point
         else:
             prev_point = None
 
-        output = cv2.addWeighted(frame, 0.4, canvas, 0.8, 0)
+        # Composite camera + canvas
+        output = cv2.addWeighted(frame, 0.5, canvas, 0.9, 0)
 
-        # Skeleton overlay on top of the blend so it stays visible
-        if results_pose.pose_landmarks:
-            mp_drawing.draw_landmarks(
-                output,
-                results_pose.pose_landmarks,
-                mp_pose.POSE_CONNECTIONS,
-                landmark_drawing_spec=mp_drawing.DrawingSpec(
-                    color=(0, 255, 0), thickness=2, circle_radius=3
-                ),
-                connection_drawing_spec=mp_drawing.DrawingSpec(
-                    color=(200, 200, 200), thickness=2
-                ),
-            )
+        # Left dashboard panel with alpha blend
+        overlay = output.copy()
+        cv2.rectangle(overlay, (0, 0), (320, height), (20, 20, 20), -1)  # panel fill
+        cv2.rectangle(overlay, (0, 0), (320, 60), (40, 40, 40), -1)  # header bar
+        # Blend overlay at 0.7
+        output = cv2.addWeighted(overlay, 0.7, output, 0.3, 0)
 
-        if results_hands.multi_hand_landmarks:
-            for hand_landmarks in results_hands.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(
-                    output,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS,
-                    landmark_drawing_spec=mp_drawing.DrawingSpec(
-                        color=(0, 200, 255), thickness=2, circle_radius=2
-                    ),
-                    connection_drawing_spec=mp_drawing.DrawingSpec(
-                        color=(0, 140, 255), thickness=2
-                    ),
-                )
+        # Labels and indicators
+        cv2.putText(output, "BODY AS BRUSH", (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
         
-        cv2.putText(output, "Pinch Right Fingers to Draw | Left Hand Up: Color | Cross Wrists: Clear", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        cv2.circle(output, (40, 70), 15, brush_color, -1)
-        cv2.putText(output, "Pen Color", (65, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        status_text = "Drawing (Pinched)" if is_drawing else "Hovering"
-        status_color = (0, 255, 0) if is_drawing else (0, 0, 255)
-        cv2.putText(output, f"Status: {status_text}", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+        # Status LED
+        cv2.putText(output, "SYSTEM STATUS", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+        if is_drawing:
+            cv2.circle(output, (30, 130), 8, (0, 255, 0), -1)  # solid green
+            cv2.putText(output, "Pen: Drawing", (50, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        else:
+            cv2.circle(output, (30, 130), 8, (100, 100, 100), 2)  # gray outline
+            cv2.putText(output, "Pen: Hovering", (50, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
-        cv2.imshow("Body-as-Brush [Dual-Fusion]", output)
+        # Color swatch
+        cv2.putText(output, "CURRENT COLOR", (20, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+        cv2.circle(output, (40, 230), 20, brush_color, -1)
+        cv2.circle(output, (40, 230), 22, (255, 255, 255), 2)  # white ring
+
+        # Help text (bottom)
+        cv2.putText(output, "CONTROLS", (20, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+        cv2.putText(output, "- Pinch: Draw", (20, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+        cv2.putText(output, "- L-Arm Up: Color", (20, 370), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+        cv2.putText(output, "- Cross Wrists: Clear", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+
+        cv2.imshow("Body-as-Brush [Pro UI]", output)
 
         if cv2.waitKey(1) & 0xFF == ord("q"): break
 
